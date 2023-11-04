@@ -1,0 +1,83 @@
+昨日書いていた文があったが、うまく編集/保存ができずに飛んでしまったみたいなので書き直しつつおさらいをしていく
+
+今回の課題はブックマーク機能のajax化
+実装したのはturbo_stream搭載による方法
+
+手順は
+１、使用する場所の把握
+２、使用場所または使用パーシャルファイル内での一意なidの登録
+３、アクション名に応じたturbo_streamファイルの新規作成
+
+
+まずは実際の搭載方法
+手順としては、最初にブックマークがある場所を把握しておく事が一点
+
+            <div class='ms-auto'>
+              <% if current_user.bookmark?(board) %>
+                <%= render 'unbookmark', { board: board } %>
+              <% else %>
+                <%= render 'bookmark', { board: board } %>
+              <% end %>
+            </div>
+
+その上で、呼び出すパーシャルファイル内ではlink_toによるお気に入り登録(create)と解除(destroy)の設定をそれぞれ追加する
+//bookmarkパーシャルとunbookmarkパーシャル　今回はboostrapのアイコン機能を使用
+<%= link_to bookmarks_path(board_id: board.id), id: "bookmark-button-for-board-#{board.id}", data: { turbo_method: :post } do %>
+  <i class="bi bi-star"></i>
+<% end %>
+
+<%= link_to bookmark_path(current_user.bookmarks.find_by(board_id: board.id)), id: "unbookmark-button-for-board-#{board.id}", data: { turbo_method: :delete } do %>
+  <i class="bi bi-star-fill"></i>
+<% end %>
+
+ここで大事なのが、idを指定すること。そして#{board.id}にして動的にboard_idを取得出来るようにする事
+ここで指定する事で、turbo_streamファイルがどこを対象に機能するようにするのか設定することが出来る。
+
+次にturbo_streamファイルの新規作成
+このturbo_streamファイルは別個にディレクトリとファイルを用意しておき、ファイル名にアクション名を付ける事で機能する
+具体的には、例えばcreate.turbo_stream.erbファイルを作成した場合
+内部に記載した前述で指定したidがそのアクション名で発火した場合、自動的にこのturbo_streamが起動するという流れになる
+
+アクションは削除や置き換えなど複数あるので、他アクションは以下の記事を参考にする
+https://qiita.com/NaokiIshimura/items/d91b10587881107b5f39
+
+実際に作成したturbo_streamファイルには、例えば以下の記述をする
+
+<%= turbo_stream.replace "bookmark-button-for-board-#{@board.id}" do %>
+  <%= render 'boards/unbookmark', board: @board %>
+<% end %>
+
+この場合、turbo_stream.replaceというアクションを実行する事で、
+ダブルクォーテーション内で指定したid部分をターゲットに、do内にあるパーシャルファイルに置き換える、という動作になる
+あとはunbookmark用のturbo_streamファイルを用意すれば、ajax化の完了となる
+
+
+以下、個人的失敗談
+
+個人的に勘違いしていたのが、このdo内に記述するのは実行したい置き換えのアクションを記述するのかと思っていたので、
+create内にbookmarkのパーシャルファイルを指定するのかと思っていた事。
+動作自体はうまくいったが、アイコン表示が想定と逆になっていたので困惑していた。
+
+あくまでここに記述するのは
+１、アクションが発生
+２、アクション処理が終了次第、renderが呼び出される
+3、render処理発生時、代わりにturbo_streamが呼び出され表示される(指定部分のみ更新されるajax処理が起こる)
+
+という流れの都合上、アクションを起こした後に表示したいもの
+つまり、例えば解除する場合は削除した結果アイコンを元の未登録状態の表示にしたいので、
+bookmark=create用ファイルにはrender unbookmarkを
+unbookmark=destroy用ファイルにはrender bookmarkを記述しなければいけなかった
+
+renderの意味を冷静に把握していれば問題なかったが、
+新しい処理だとやっぱり把握が溢れるなぁと思った次第
+
+
+
+かなりハマっていたのが、最初は間違えて両方にdestroy用の記述をしてしまっていて、解除ボタンを押す度に二重にdestroyが発火して
+既にIDが存在していないとURIエラーが出てしまっていた
+これも冷静に見ればすぐ気づけるだろうが・・・経験則がないと本当に全てが疑わしく見えるので特定まですごく難しかった
+
+教訓は、destroy処理が二回発生させてしまい削除すべきデータが存在しない場合
+URIエラーという表示とともにid=nilが出るという事
+
+これも一つの学びとして今後に活かしたいところ、という苦戦した課題でした。

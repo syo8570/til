@@ -1,0 +1,100 @@
+今回も管理画面実装のカリキュラム
+
+ハマった所とそれを調べた結果や解決を書いていく
+
+１、見覚えのない新しいエラー
+
+No template for interactive request
+Admin::UserSessionsController#new is missing a template for request formats: text/html
+NOTE!
+Unless told otherwise, Rails expects an action to render a template with the same name,
+contained in a folder named after its controller. If this controller is an API responding with 204 (No Content),
+which does not require a template, then this error will occur when trying to access it via browser,
+since we expect an HTML template to be rendered for such requests. If that's the case, carry on.
+
+意味合いとしてはこのフォーマットに適したビューファイルがないよ、という意味みたいだが
+存在しているのでなんでかな〜と思っていたところで思い当たった。
+最初にコントローラーを作成した時、間違えて末尾にsをつけ忘れてしまった為に最初はルーティングエラーが発生していたのだ。
+
+各所にsを付けた事で解消しこのエラーになったのだが、よくよく見るとこのディレクトリ名にもsが付いていなかった
+予測通り、付けたところ無事にいつも記述に不備がある時のエラーが出てきたので一旦解決
+名付けミスはちょくちょくするが、新しい事をすると名前の不備なのか新しい事の実装の不備なのか絞れなくて迷ってしまう
+
+今回のもNamErrorと出てくれれば早かったが・・・初歩的な所で間違えたのは私なので、こういう出方もすると教訓にしておく
+
+
+２、Dartsassとプリコンパイル
+
+ざっくり書くとscssはそのままではHTMLの方で呼び出されても認識出来ないので
+「このscssはcssとして認識して使ってね」というパスを記述するファイルだと認識した
+
+ここでハマっていたのが
+Sprockets::Rails::Helper::AssetNotFound in admin::UserSessions#new
+というエラーが発生してしまった事
+どうやらアセットが存在していない＝scssしかないので表示できないよというエラー
+
+通常はdartsass内に
+  "admin/login.scss" => "admin/login.css"
+という風に、
+"変換元scssファイル" => "変換後ファイル名.css"
+のように記述すれば大丈夫なのだが、何故かこれがうまく認識されなかったらしい
+
+上記の書き方でもあっているか分からない初回なので右往左往していたが
+このコマンドを打ってサーバーを再起動する事で解決できた
+(bin/rails assets:precompile)
+
+意味としてはassetsのプリコンパイル(事前変換)をしてくれっていうコマンドだが
+どうやらこのコンパイルがうまく動いていなかったらしく、手動でプリコンパイルする事でコンパイルファイルが作成され、無事読み込めるようになったようだ
+この件は調べた情報がかなり散らばって、でもどれも必要な情報として色々あるので記述していく
+
+
+まず前提として、私は開発環境で実行しているので普通はこのエラーは起きないらしい
+何故かと言うと、開発環境下ではこのプリコンパイルを実行しなくても、
+アクセスしようとした際に動的に認識し、その度にコンパイルしてくれるからとの事。
+
+この処理は考え方としてはturbo_streamに近い。
+ビューで指定されたscssを参照する=>参照先のパスがdartsassにcssへコンパイルしろと書いてあるので実行する=>コンパイルされた情報をビューに渡す
+という流れのようなので、ターゲットIDが発火した事を認識して置き換わるturbo_streamにやはり近いと思った。
+
+ただ、本番環境ではこれ上記の動的なコンパイルが実行されず、同じ条件下ではエラーが起こるらしい。
+ではどうするかという時に使うのが、今回の問題の解決であった
+(bin/rails assets:precompile)
+というコマンド
+
+
+どうやら動きが開発環境とは違うらしく、事前にこのコマンドを打つ必要があるらしい
+何故かと言うと、
+
+//Dartsass
+Rails.application.config.dartsass.builds = {
+  "application.scss" => "application.css",
+  "admin/application.scss" => "admin/application.css",
+  "admin/login.scss" => "admin/login.css"
+}
+//htmlファイル
+    <%= stylesheet_link_tag 'admin/login' %>
+    <%= javascript_include_tag "admin", "data-turbo-track": "reload", defer: true %>
+
+こんな感じで通常はパスを指定しておくが、
+本番環境ではプリコンパイルを行っておく事で、ディレクトリ内にあるpublic/assetsディレクトリにコンパイル済のcssファイルを作成し
+以降は全てこの作成されたcssファイルを読み込んで実行されるらしいのだ。
+
+
+何故動きが違うのかは開発環境だからすぐ結果みたいでしょ？という気持ちなのかは不明
+ひとまず動きとしてまとめると以下の通り
+
+開発環境
+アクセスする=>sassを呼び出そうとする=>Dartsassにcss化しろと指定がある=>コンパイルされる=>cssファイルとして呼び出される
+本番環境
+(事前)プリコンパイルをする=>dartsassの指定通りにscssファイルをcssへコンパイルする=>コンパイルしたファイルをpublic/assetsへ保存する
+アクセスする=>sassを呼び出そうとする=>dartsassのパスを見てassetsディレクトリのcssファイルを呼び出す
+
+という風に、コンパイルをアクセス時にするか事前にするかの差がある。
+当然事前にコンパイルしておいた方がアクセスは早くなるので、なるほど理にかなってますね
+
+で、結論としては
+何故か本番環境のような認識がされてしまって動的にコンパイルされていなかったので
+手動でプリコンパイルを行う事で本番環境さながらに出ていたエラーは無事出なくなりました、という形ですね
+
+Dartsassは元々調べるつもりだったけど、このエラーのおかげでより深掘りできたのでよかった。
+
